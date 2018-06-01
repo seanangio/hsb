@@ -1,10 +1,10 @@
 ---
-title: "Mapping the Growth of Saravana Bhavan Restaurants around the World"
+title: "Mapping Dosas"
 author: "Sean Angiolillo"
 date: "29 May 2018"
 output: html_document
 ---
-
+<base target="_blank"/>
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, out.width = "70%", fig.align = "center")
 ```
@@ -13,7 +13,7 @@ knitr::opts_chunk$set(echo = TRUE, out.width = "70%", fig.align = "center")
 
 From humble origins in Chennai, Saravana Bhavan has grown into a global chain of close to 100 restaurants. If you eat at their Delhi location, you'll find a paper placemat in front of you listing all of their locations around the world. I took the opportunity to scrape their company website for the addresses of these locations and map them.
 
-This blog explains how I made a few different visualizations of the chain's growth, but here is my favorite. 
+This blog explains how I made a few different visualizations of the chain's growth, but here is my favorite. Most of the code is shown here, but the full repository can be found in [GitHub](https://github.com/seanangio/hsb).
 
 <center>
 
@@ -55,7 +55,7 @@ In order to do this, I first manually compiled a list of countries, noting their
 
 Next, I loaded in some data from the `countrycode` package in order to pair each country with its continent. Later we can map this variable to color for some differentiation in our map.
 
-```{r}
+```{r eval=FALSE}
 # start with vector of countries exactly matching website
 countries <- c("Canada", "U.S.A", "SouthAfrica", "Sweden", "Netherland", 
                "U.K", "Germany", "France", "SaudiArabia", "Bahrain", "Qatar",
@@ -99,21 +99,24 @@ continents <- codelist %>%
     select(country.name.en, continent)
 
 # fix country names and join with continents
-hsb <- hsb %>%
+hsb1 <- hsb %>%
     left_join(continents, by = c("clean_country" = "country.name.en"))
+
+saveRDS(hsb1, file = "hsb1.rds")
 ```
 
 We can see the results thus far here.
 
 ```{r echo=FALSE}
-datatable(hsb)
+hsb1 <- readRDS("hsb1.rds")
+datatable(hsb1)
 ```
 
 ### Scrape city pages
 
 After scraping the country pages for city names, we can scrape the city pages for their locations. We can write a very similar function but now target both the name of the location and its corresponding restaurant id ("rid").
 
-```{r}
+```{r eval=FALSE}
 # function to get locations and restaurant id from city page
 get_location_rid <- function(city_url) {
     
@@ -137,29 +140,37 @@ get_location_rid <- function(city_url) {
 }
 
 # add locations and rid to each city; mutate complete url for a location
-hsb <- hsb %>%
+hsb2 <- hsb1 %>%
     mutate(location_rid = purrr::map(.$city_url, get_location_rid)) %>%
     unnest() %>%
     mutate(rid_url = str_c(city_url, "&rid=", rid))
+
+# output another file to avoid scraping
+saveRDS(hsb2, file = "hsb2.rds")
 ```
 
 At this point we can look to see which cities and countries have the most locations. Chennai, where the chain started, is of course the clear leader but cities like London, Singapore and Dubai all have a very high number of locations. 
 
 ```{r echo=FALSE}
+hsb2 <- readRDS("hsb2.rds")
+
 datatable(
-   hsb %>%
+   hsb2 %>%
     group_by(city, clean_country) %>%
     count() %>%
     arrange(desc(n)),
-   colnames = c("City", "Country", "No. of Locations")
-)
+   colnames = c("City", "Country", "No. of Locations"),
+   options = list(
+       columnDefs = list(list(className = 'dt-body-center', targets = '_all'),
+                         list(className = 'dt-head-center', targets = '_all'))
+))
 ```
 
 ### Scrape location pages for addresses and launch dates
 
 I repeated essentially the same process once more, now focused on extracting addresses and launch dates. For addresses, we have to do a bit of cleanup because we extracted more information than we need, such as phone numbers in most cases. These are not always formatted the same way for each page, but luckily address is always listed first. I have also made a few manual adjustments to addresses that are too brief to find a geolocation match. I also took the step of creating a variable for popup text to be displayed on the leaflet map.
 
-```{r warning=FALSE}
+```{r warning=FALSE, eval=FALSE}
 # function to get address information from location page
 get_address <- function(rid_url) {
     read_html(rid_url) %>%
@@ -168,28 +179,28 @@ get_address <- function(rid_url) {
 }
 
 # add addresses for each location to dataframe
-hsb <- hsb %>%
+hsb2 <- hsb2 %>%
     mutate(address = purrr::map(.$rid_url, get_address)) %>%
     unnest() %>%
     filter(!address == "View Location Map")
 
 # remove an erroneous duplicate row
-hsb <- hsb[-c(36),]
+hsb2 <- hsb2[-c(36),]
 
 # clean addresses by splitting on phone number in most cases
-hsb <- hsb %>%
+hsb2 <- hsb2 %>%
     separate(address, into = c("address", "extra"),
              sep = "Ph:|Ph :|Ph-|Ph -|PH -|Phone:|Tel:|Tel :|Tel  :|Tel /|Phone :|hsb.{1,}@saravanabhavan.com", remove = FALSE) %>% 
     mutate(address = str_remove(address, "\\.$"))
 
 # make a few manual adjustments for failing addresses
-hsb$address[hsb$location == "Vivo City"] <- str_c(
-    hsb$address[hsb$location == "Vivo City"], ", Vivo City, Singapore")
-hsb$address[hsb$location == "Bur Dubai"] <- str_c(
-    hsb$address[hsb$location == "Bur Dubai"], ", Bur Dubai, Dubai")
+hsb$address[hsb2$location == "Vivo City"] <- str_c(
+    hsb$address[hsb2$location == "Vivo City"], ", Vivo City, Singapore")
+hsb$address[hsb2$location == "Bur Dubai"] <- str_c(
+    hsb$address[hsb2$location == "Bur Dubai"], ", Bur Dubai, Dubai")
 
 # concatenate location and address in html for leaflet popups
-hsb <- hsb %>%
+hsb2 <- hsb2 %>%
     mutate(
         popup = str_c(
             "<b style='color: blue'>", location, "</b><br/>",
@@ -200,7 +211,7 @@ hsb <- hsb %>%
 
 We can follow the same process for dates. Only two locations are missing launch dates so that will not be a problem, and one of those restaurants missing a launch date looks to be closed anyway.
 
-```{r}
+```{r eval=FALSE}
 # function to get launch date information from location page
 get_date <- function(rid_url) {
     
@@ -216,7 +227,7 @@ get_date <- function(rid_url) {
 }
 
 # add addresses for each location to dataframe
-hsb <- hsb %>%
+hsb2 <- hsb2 %>%
     mutate(date = purrr::map_chr(.$rid_url, get_date),
            date = as.Date(date, format = "%d-%m-%Y")) 
 ```
@@ -257,7 +268,7 @@ get_geo <- function(address) {
 }
 
 # get coordinates for each location's address in a new df after removing known failures
-address_crs <- hsb %>%
+address_crs <- hsb2 %>%
     filter(!location %in% c("Southall", "Tooting", "Al Khuwair")) %>%
     .$address %>%
     map_dfr(get_geo)
@@ -272,7 +283,7 @@ Lastly, we just need to join the coordinate data back into our main dataset.
 address_crs <- readRDS("address_crs.RDS")
 
 # join coordinate data back into main df with 3 manual additions
-final_hsb <- hsb %>%
+final_hsb <- hsb2 %>%
     left_join(address_crs, by = "address") %>%
     mutate(
         lat = case_when(
@@ -370,7 +381,8 @@ datatable(
         select(hsb_total, city_country, date, city_total),
     rownames = FALSE,
     colnames = c("Chain Total", "Location", "Launch Date", "City Total"),
-    options = list(columnDefs = list(list(className = 'dt-center', targets = "_all")))
+    options = list(columnDefs = list(list(className = 'dt-center', targets = "_all"),
+                                     list(className = 'dt-head-center', targets = "_all")))
 )
 ```
 
@@ -476,4 +488,4 @@ gganimate(hsb_time, filename = "hsb_time.gif")
 
 ## Conclusion
 
-I hope these examples helped demonstrate the power of packages like `rvest` for webscraping, `leaflet` for html maps, and `gganimate` for animated plots. The most interesting thing I noted about the chain's growth is the absolute paucity of branches in India, outside of Chennai. Eight locations in London but not a single one in Mumbai, Bangalore, Kolkata, Pune, Ahmedabad, etc? That seems quite odd.
+I hope these examples helped demonstrate the power of packages like `rvest` for webscraping, `leaflet` for html maps, and `gganimate` for animated plots. One possible improvement would be using `tweenr` to interpolate data between dates in order to smoothen out the transitions from point to point. The most interesting thing I noted about the chain's growth is the absolute paucity of branches in India, outside of Chennai. Eight locations in London but not a single one in Mumbai, Bangalore, Kolkata, Pune, Ahmedabad, etc? That seems quite odd.
